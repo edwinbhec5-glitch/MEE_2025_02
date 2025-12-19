@@ -1,0 +1,286 @@
+---
+title: "Práctica guiada: Regresión lineal (OLS)"
+subtitle: "Basado en *Econometrics with R* (Sección 4.2)"
+asignatura: "Métodos estadísticos y econométricos para políticas públicas"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    number-depth: 4
+    number-offset: 0
+    html-math-method: mathjax
+execute:
+  echo: true
+  warning: false
+  message: false
+
+---
+
+# Objetivos de aprendizaje
+
+Al finalizar esta práctica podrá:
+
+1. Repasar modelos de **regresión lineal simple** con una variable explicativa **cualitativa (dummy / factor)**.
+2. Interpretar regresiones con **transformación logarítmica**.
+3. Estimar e interpretar un modelo de **regresión lineal múltiple** con transformaciones y variables explicativas cuantitativas y cualitativas.
+
+
+# Preparación
+
+## Paquetes
+
+```{r}
+# Si no los tienes instalados, ejecuta una vez:
+# install.packages(c("AER","ggplot2","dplyr","lmtest","sandwich"))
+
+library(AER)       # Datos (CASchools, CPSSWEducation)
+library(ggplot2)   # Gráficos
+library(dplyr)     # Manipulación de datos
+library(lmtest)    # coeftest()
+library(sandwich)  # vcovHC()
+```
+
+
+# Regresion 1: Repaso de regresiones con X cualitativa (dummy / factor) con CPSSWEducation
+
+## Cargar datos y revisar la variable categórica
+
+```{r}
+data("CPSSWEducation")
+
+class(CPSSWEducation$gender)
+levels(CPSSWEducation$gender)
+```
+
+## Visualización: boxplot por género
+
+```{r}
+ggplot(CPSSWEducation, aes(x = gender, y = earnings)) +
+  geom_boxplot()
+```
+
+**Qué mirar**:
+- Diferencia en medianas / medias
+- Dispersión por grupo
+- Asimetría y valores extremos
+
+## Crear una dummy manual (opcional) y conectarla con t-test
+
+Creamos `Dummy = 1` si es hombre, `0` si es mujer.
+
+```{r}
+CPSSWEducation <- CPSSWEducation %>%
+  mutate(Dummy = ifelse(gender == "male", 1, 0))
+```
+
+Gráfico "tipo regresión" con Dummy:
+
+```{r}
+ggplot(CPSSWEducation, aes(x = Dummy, y = earnings)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = lm, se = FALSE, color = "red")
+```
+
+## Modelo con dummy
+
+```{r}
+modelo2_dummy <- lm(earnings ~ Dummy, data = CPSSWEducation)
+summary(modelo2_dummy)
+```
+
+**Interpretación clave**:
+- Intercepto: media esperada de ingresos cuando Dummy = 0 (mujeres).
+- Coeficiente de Dummy: diferencia promedio (hombres − mujeres).
+
+## El mismo modelo usando el factor `gender`
+
+```{r}
+modelo2_factor <- lm(earnings ~ gender, data = CPSSWEducation)
+summary(modelo2_factor)
+
+aggregate(earnings ~ gender, data = CPSSWEducation, mean)
+confint(modelo2_factor)
+```
+
+**Comentario:** con un factor de 2 niveles, el coeficiente del segundo nivel es exactamente la diferencia de medias respecto a la categoría base.
+
+
+# Regresion 2: Regresión simple (X cuantitativa) con CASchools
+
+## Cargar datos y construir la variable X
+
+- **Idea**: queremos explicar el puntaje promedio de matemáticas (`math`) usando el ratio de estudiantes por profesor (`estxprof`).
+El ratio se calcula como `students/teachers`.
+
+```{r}
+data("CASchools")
+
+
+# Construimos el ratio de estudiantes por profesor
+CASchools$estxprof <- CASchools$students / CASchools$teachers
+```
+
+**Interpretación esperada de X**:
+- Si `estxprof` aumenta, hay (en promedio) más estudiantes por profesor.  
+- La pregunta es si eso se asocia a mejores o peores puntajes en matemáticas.
+
+## Exploración gráfica (nube de puntos + recta OLS)
+
+```{r}
+ggplot(CASchools, aes(x = estxprof, y = math)) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE, color = "red")
+```
+
+**Qué mirar en el gráfico**:
+- ¿Parece haber tendencia negativa o positiva?
+- ¿La relación parece aproximadamente lineal?
+- ¿Hay puntos extremos (outliers) fuertes?
+
+## Descriptivos básicos
+
+```{r}
+hist(CASchools$math)
+hist(CASchools$estxprof)
+
+mean(CASchools$math); sd(CASchools$math)
+mean(CASchools$estxprof); sd(CASchools$estxprof)
+```
+
+**Comentario:** Es importante iniciar analizando de forma descriptiva las variables de interés (tanto cualitativas como cuantitativas). Esto ayuda a comprender mejor el tipo de información con la que vamos a trabajar el OLS y los resultados que obtendremos.
+
+## Estimar el modelo y leer los coeficientes
+
+Modelo:
+$$
+math_i = \beta_0 + \beta_1 estxprof_i + u_i
+$$
+
+```{r}
+modelo1 <- lm(math ~ estxprof, data = CASchools)
+summary(modelo1)
+```
+
+### Cómo interpretar
+
+- **Intercepto** $\beta_0$\: valor esperado de `math` cuando `estxprof = 0`.  
+  (No siempre tiene interpretación realista; es un punto de referencia del modelo.)
+- **Pendiente** $\beta_1$\: cambio esperado en `math` ante **un aumento de 1 unidad** en `estxprof`
+  (es decir, 1 estudiante adicional por profesor, en promedio), manteniendo lo demás constante.
+
+**Pregunta:** ¿el signo de $\beta_1$\ concuerda con el gráfico?
+
+## Predicción (valores ajustados)
+
+```{r}
+CASchools$math_hat  <- predict(modelo1)
+CASchools$math_hat1 <- modelo1$fitted.values
+head(CASchools[, c("math","estxprof","math_hat")])
+```
+
+**Idea**: el valor ajustado es $\hat{y}_i$\, la mejor predicción lineal de `math` dada `estxprof`.
+
+
+# Regresion 3: Regresión simple (X cuantitativa) — earnings ~ education
+
+## Visualización
+
+```{r}
+ggplot(CPSSWEducation, aes(x = education, y = earnings)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = lm, se = FALSE, color = "red")
+```
+
+## Estimar y leer el modelo
+
+```{r}
+modelo3 <- lm(earnings ~ education, data = CPSSWEducation)
+summary(modelo3)
+```
+
+**Interpretación típica**:
+- $\beta_1$\: cambio promedio en `earnings` por **un año adicional** de educación (si `education` está en años).
+
+**Pregunta:** ¿parece posible que el efecto sea constante para todo nivel educativo?.
+
+
+# Regresion 4: Transformación logarítmica y regresión múltiple
+
+## ¿Por qué transformar?
+
+Los ingresos suelen ser:
+- positivos,
+- asimétricos (cola a la derecha),
+- con algunos valores muy altos.
+
+Esto hace útil usar log(ingreso) para:
+- reducir asimetría,
+- interpretar efectos como cambios porcentuales (aprox.).
+
+
+## Crear log(earnings)
+
+```{r}
+CPSSWEducation$learnings <- log(CPSSWEducation$earnings)
+
+hist(CPSSWEducation$learnings)
+```
+
+### Modelo en logaritmos ambos lados (log-log)
+
+Si el modelo es:
+$$
+\log(y)=\beta_0+\beta_1 log(X) + \dots
+$$
+```{r}
+modelo4 <- lm(learnings ~ log(education), data = CPSSWEducation)
+summary(modelo4)
+```
+
+**Interpretación**: un aumento de 1% en $X$ produce un cambio de ($\beta_1$\)% en $Y$.
+
+
+### Relaciones semilogaritmicas (Log - Lineal)
+Si el modelo es:
+$$
+\log(y)=\beta_0+\beta_1 X + \dots
+$$
+```{r}
+modelo5 <- lm(learnings ~ gender, data = CPSSWEducation)
+summary(modelo5)
+```
+
+**Interpretación**: Un aumento de una unidad en $X$ provoca un cambio de ($\beta_1$\)*100% en $Y$, cuando es pequeño.
+
+Ejemplo:
+- si ($\beta_1 = 0.05$\), entonces ≈ **5%**.
+
+Si $\beta_1$ es grande (mayor a 0.1) el cambio que provoca es ($e^{\beta_1}-1$)*100% en Y
+
+**Finalmente, una última relación podría ser: Lineal - Log, donde un aumento de un 1% en $X$ provoca un cambio de $\beta_1$/100 unidades en $Y$**
+
+
+## Modelo múltiple que incluye transformaciones
+
+```{r}
+modelo6 <- lm(learnings ~ log(education)+gender+age, data = CPSSWEducation)
+summary(modelo6)
+```
+
+
+# Cierre: checklist de lo que debe poder explicar
+
+1. ¿Qué representa el intercepto y la pendiente en OLS?
+2. ¿Qué significa "controlar por" variables?
+3. ¿Qué significa una dummy y su coeficiente?
+4. ¿Por qué log(ingresos) cambia la interpretación del modelo?
+5. ¿Por qué es mala idea reportar solo p-valores sin magnitud?
+
+# Referencia
+
+Los datos y ejercicios se inspiran en el libro en línea *Econometrics with R*, sección "Estimating the coefficients of the linear regression model (4.2)".
+
+
+
+
